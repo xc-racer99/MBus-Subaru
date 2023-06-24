@@ -34,9 +34,9 @@ limitations under the License.
 			MBus(uint8_t in, uint8_t out);
 			MBus(uint8_t pin);
 			void send(uint64_t message);
-			boolean receive(uint64_t *message);
-			void sendPlayingTrack(uint8_t Track,uint16_t Time);
-			void sendChangedCD(uint8_t CD,uint8_t Track);
+			bool receive(uint64_t *message);
+			void sendPlayingTrack(uint8_t Track, uint16_t Time);
+			void sendChangedCD(uint8_t CD, uint8_t Track);
 			void sendCDStatus(uint8_t CD);
 		private:
 			uint8_t _in;
@@ -45,6 +45,6 @@ limitations under the License.
 			void sendZero();
 			void sendOne();
 			void writeHexBitWise(uint8_t message);
-			boolean checkParity(uint64_t *message);
+			bool checkParity(uint64_t *message);
 	};
 #endif	

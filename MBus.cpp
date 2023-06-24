@@ -19,9 +19,9 @@ limitations under the License.
 
 MBus::MBus(uint8_t pin)
 {
-	_in=pin;
-	_out=pin;
-	_invertedSend=true;
+	_in = pin;
+	_out = pin;
+	_invertedSend = true;
 
 	pinMode(pin, (OUTPUT_OPEN_DRAIN | INPUT));
 	digitalWrite(pin, HIGH);
@@ -29,9 +29,9 @@ MBus::MBus(uint8_t pin)
 
 MBus::MBus(uint8_t in, uint8_t out)
 {
-	_in=in;
-	_out=out;
-	_invertedSend=false;
+	_in = in;
+	_out = out;
+	_invertedSend = false;
 	
 	pinMode(_in, INPUT);
 	pinMode(_out,OUTPUT);
@@ -53,146 +53,127 @@ void MBus::sendOne()
 	delayMicroseconds(1200);
 }
 
-void MBus::writeHexBitWise(uint8_t message)
+void MBus::writeHexBitWise(uint8_t nibble)
 {
-		for(int8_t i=3; i>-1; i--)
-	{
-		uint8_t output=((message & (1<<i) )>>i);
-		if(output==1)
-		{
+	for (int8_t i = 3; i >= 0; i--) {
+		uint8_t bit = ((nibble & (1 << i) ) >> i);
+		if (bit == 1) {
 			sendOne();
-		}
-		else
-		{
+		} else {
 			sendZero();
 		}
 	}
 }
 
-boolean MBus::checkParity(uint64_t *message)
+bool MBus::checkParity(uint64_t *message)
 {
-	uint8_t parity=0;
-	uint8_t test=0;
-	for(uint8_t i=15; i>0; i--)
-	{
-		test = ((uint64_t)*message >> i * 4) & 0xf;
-		parity=parity^test;
+	uint8_t parity = 0;
+	uint8_t nibble = 0;
+	for (uint8_t i = 15; i > 0; i--) {
+		nibble = ((uint64_t)*message >> i * 4) & 0xf;
+		parity = parity ^ nibble;
 	}
-	parity+=1;
-
+	parity += 1;
 	parity &= 0xf;
 	
-	if(parity==(*message & ((uint64_t)0xf)))
+	if (parity == (*message & (uint64_t)0xf)) {
 		return true;
-	else
-	{
+	} else {
 		return false;
 	}
 }
 
 void MBus::send(uint64_t message)
 {
-	uint8_t printed=0;
-	uint8_t parity=0;
-	for(int8_t i=15; i>=0; i--)
-	{
-		uint8_t output = ((uint64_t)message >> i * 4) & 0xf;
-	parity=parity^output;
-		if(!output&&!printed)
-		{
-			//do nothing
-		}
-		else
-		{
-			writeHexBitWise(output);
-			printed++;
+	bool firstDataSent = 0;
+	uint8_t parity = 0;
+	for (int8_t i = 15; i >= 0; i--) {
+		uint8_t nibble = ((uint64_t)message >> i * 4) & 0xf;
+		parity = parity ^ nibble;
+		if (nibble == 0 && !firstDataSent) {
+			// Do nothing, first actual data bit not sent yet
+		} else {
+			writeHexBitWise(nibble);
+			firstDataSent = true;
 		}
 	}
-	parity+=1;
+	parity += 1;
+	parity &= 0xf;
 
-	writeHexBitWise(parity & 0xF);
+	writeHexBitWise(parity);
 }
 
-boolean MBus::receive(uint64_t *message)
+bool MBus::receive(uint64_t *message)
 {
-	*message=0;
-	if(digitalRead(_in)==LOW)
-	{
-		unsigned long time=micros();
+	*message = 0;
+	if (digitalRead(_in) == LOW) {
+		unsigned long bitStartTime = micros();
+		bool bitFinished = false; 
+		uint8_t totalBitsRead = 0;
 
-		boolean gelesen=false; 
-		uint8_t counter=0;
-
-		while((micros()-time)<4000)
-		{
-			if(digitalRead(_in)==HIGH&&!gelesen)
-			{
-				if((micros()-time)<1400&&(micros()-time)>600)//0 is in between 600 and 1700 microseconds
-				{
-				  *message*=2;
-				  counter++;
-				  gelesen=true; 
-				}
-				else if((micros()-time)>1400)//1 is longer then 1700 microseconds
-				{
-				  *message*=2;
-				  *message+=1;
-				  counter++;
-				  gelesen=true;
-				  
+		while ((micros() - bitStartTime) < 4000) {
+			if (digitalRead(_in) == HIGH && !bitFinished) {
+				if ((micros() - bitStartTime) < 1400 && (micros() - bitStartTime) > 600) {
+					// 0 is in between 600 and 1700 microseconds
+					*message *= 2;
+					totalBitsRead++;
+					bitFinished = true; 
+				} else if ((micros() - bitStartTime) > 1400) {
+					// 1 is longer then 1400 microseconds
+					*message *= 2;
+					*message += 1;
+					totalBitsRead++;
+					bitFinished = true;
 				}
 			}
-			if(gelesen&&digitalRead(_in)==LOW)  
-			{
-				gelesen=false;
-				time=micros();
-			}  
+			// Transfer to next bit if we are reading low again
+			if (bitFinished && digitalRead(_in) == LOW) {
+				bitFinished = false;
+				bitStartTime = micros();
+			}
 		}
-		if(counter%4||!checkParity(message)||counter==0)
-		{
-			//message is not ok
-			*message=0;
-					return false;
-		}
-		else
-		{
-			(*message)=(*message)>>4;//ingnore parity
-					return true;
+		if (totalBitsRead == 0 || totalBitsRead % 4 || !checkParity(message)) {
+			// Message is not ok
+			*message = 0;
+			return false;
+		} else {
+			// Discard parity nibble
+			(*message) = (*message) >> 4;
+			return true;
 		}
 	}
 	return false;
-
 }
 
 /*
  CD-changer emulation from here on
 */
-void MBus::sendPlayingTrack(uint8_t Track,uint16_t Time)
+void MBus::sendPlayingTrack(uint8_t Track, uint16_t Time)
 {
-	uint64_t play=0x994000100000001ull;
-	play|=(uint64_t)(Track%10)<<(10*4);
-	play|=(uint64_t)(Track/10)<<(11*4);
+	uint64_t play = 0x994000100000001ull;
+	play |= (uint64_t)(Track % 10) << (10 * 4);
+	play |= (uint64_t)(Track / 10) << (11 * 4);
 	
-	play|=(uint64_t)(Time%10)<<(4*4);
-	play|=(uint64_t)((Time%100)/10)<<(5*4);
-	play|=(uint64_t)((Time/60)%10)<<(6*4);
-	play|=(uint64_t)(((Time/60)%100)/10)<<(7*4);
+	play |= (uint64_t)(Time % 10) << (4 * 4);
+	play |= (uint64_t)((Time % 100) / 10) << (5 * 4);
+	play |= (uint64_t)((Time / 60) % 10) << (6 * 4);
+	play |= (uint64_t)(((Time / 60) % 100) / 10) << (7 * 4);
 	
 	send(play);
 }
 
-void MBus::sendChangedCD(uint8_t CD,uint8_t Track)
+void MBus::sendChangedCD(uint8_t CD, uint8_t Track)
 {
-	uint64_t play=0x9B900000001ull;
-	play|=(uint64_t)CD<<(7*4);
-	play|=(uint64_t)(Track%10)<<(5*4);
-	play|=(uint64_t)(Track/10)<<(6*4);
+	uint64_t play = 0x9B900000001ull;
+	play |= (uint64_t)CD << (7 * 4);
+	play |= (uint64_t)(Track % 10) << (5 * 4);
+	play |= (uint64_t)(Track / 10) << (6 * 4);
 	send(play);
 }
 
 void MBus::sendCDStatus(uint8_t CD)
 {
-	uint64_t play=0x9C001999999Full;
-	play|=(uint64_t)CD<<(9*4);
+	uint64_t play = 0x9C001999999Full;
+	play |= (uint64_t)CD << (9 * 4);
 	send(play);
 }
