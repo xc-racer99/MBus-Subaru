@@ -17,11 +17,21 @@ limitations under the License.
 ***/
 #include "MBus.h"
 
+MBus::MBus(uint8_t pin)
+{
+	_in=pin;
+	_out=pin;
+	_invertedSend=true;
+
+	pinMode(pin, (OUTPUT_OPEN_DRAIN | INPUT));
+	digitalWrite(pin, HIGH);
+}
 
 MBus::MBus(uint8_t in, uint8_t out)
 {
 	_in=in;
 	_out=out;
+	_invertedSend=false;
 	
 	pinMode(_in, INPUT);
 	pinMode(_out,OUTPUT);
@@ -29,17 +39,17 @@ MBus::MBus(uint8_t in, uint8_t out)
 
 void MBus::sendZero()
 {
-	digitalWrite(_out, HIGH);
+	digitalWrite(_out, _invertedSend ? LOW : HIGH);
 	delayMicroseconds(600);
-	digitalWrite(_out, LOW);
+	digitalWrite(_out, _invertedSend ? HIGH : LOW);
 	delayMicroseconds(2400);
 }
 
 void MBus::sendOne()
 {
-	digitalWrite(_out, HIGH);
+	digitalWrite(_out, _invertedSend ? LOW : HIGH);
 	delayMicroseconds(1800);
-	digitalWrite(_out, LOW);
+	digitalWrite(_out, _invertedSend ? HIGH : LOW);
 	delayMicroseconds(1200);
 }
 
@@ -63,14 +73,16 @@ boolean MBus::checkParity(uint64_t *message)
 {
 	uint8_t parity=0;
 	uint8_t test=0;
-	for(uint8_t i=16; i>0; i--)
+	for(uint8_t i=15; i>0; i--)
 	{
-		test=((*message & ((uint64_t)0xF<<i*4) )>>i*4);
+		test = ((uint64_t)*message >> i * 4) & 0xf;
 		parity=parity^test;
 	}
 	parity+=1;
+
+	parity &= 0xf;
 	
-	if(parity==(*message & ((uint64_t)0xF)))
+	if(parity==(*message & ((uint64_t)0xf)))
 		return true;
 	else
 	{
@@ -82,9 +94,9 @@ void MBus::send(uint64_t message)
 {
 	uint8_t printed=0;
 	uint8_t parity=0;
-	for(int8_t i=16; i>=0; i--)
+	for(int8_t i=15; i>=0; i--)
 	{
-		uint8_t output=((message & ((uint64_t)0xF<<i*4) )>>i*4);
+		uint8_t output = ((uint64_t)message >> i * 4) & 0xf;
 	parity=parity^output;
 		if(!output&&!printed)
 		{
@@ -97,7 +109,8 @@ void MBus::send(uint64_t message)
 		}
 	}
 	parity+=1;
-	writeHexBitWise(parity);
+
+	writeHexBitWise(parity & 0xF);
 }
 
 boolean MBus::receive(uint64_t *message)

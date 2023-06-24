@@ -32,6 +32,7 @@ limitations under the License.
 	{
 		public:
 			MBus(uint8_t in, uint8_t out);
+			MBus(uint8_t pin);
 			void send(uint64_t message);
 			boolean receive(uint64_t *message);
 			void sendPlayingTrack(uint8_t Track,uint16_t Time);
@@ -40,6 +41,7 @@ limitations under the License.
 		private:
 			uint8_t _in;
 			uint8_t _out;
+			bool _invertedSend = true;
 			void sendZero();
 			void sendOne();
 			void writeHexBitWise(uint8_t message);
