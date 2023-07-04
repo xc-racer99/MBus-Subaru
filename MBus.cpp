@@ -17,6 +17,10 @@ limitations under the License.
 ***/
 #include "MBus.h"
 
+MBus::BitTrain MBus::bitTrain;
+SemaphoreHandle_t MBus::bitTrainMutex;
+hw_timer_t *MBus::dataTimer = NULL;
+
 MBus::MBus(uint8_t pin)
 {
 	_in = pin;
@@ -25,6 +29,15 @@ MBus::MBus(uint8_t pin)
 
 	pinMode(pin, (OUTPUT_OPEN_DRAIN | INPUT));
 	digitalWrite(pin, HIGH);
+
+	if (dataTimer == NULL) {
+		dataTimer = timerBegin(0, 80, true);
+		timerAttachInterrupt(dataTimer, &onDataTimer, true);
+	}
+
+	if (bitTrainMutex == NULL) {
+		bitTrainMutex = xSemaphoreCreateMutex();
+	}
 }
 
 MBus::MBus(uint8_t in, uint8_t out)
@@ -34,23 +47,54 @@ MBus::MBus(uint8_t in, uint8_t out)
 	_invertedSend = false;
 	
 	pinMode(_in, INPUT);
-	pinMode(_out,OUTPUT);
+	pinMode(_out, OUTPUT);
+
+	if (dataTimer == NULL) {
+		dataTimer = timerBegin(0, 80, true);
+		timerAttachInterrupt(dataTimer, &onDataTimer, true);
+	}
+
+	if (bitTrainMutex == NULL) {
+		bitTrainMutex = xSemaphoreCreateMutex();
+	}
 }
 
-void MBus::sendZero()
+void MBus::onDataTimer()
 {
-	digitalWrite(_out, _invertedSend ? LOW : HIGH);
-	delayMicroseconds(600);
-	digitalWrite(_out, _invertedSend ? HIGH : LOW);
-	delayMicroseconds(2400);
-}
+	// Don't need to hold bitTrainMutex as it should already be held by "calling" code
+	if (bitTrain.bitInProgress) {
+		digitalWrite(bitTrain.pinOut, bitTrain.invertedSend ? HIGH : LOW);
 
-void MBus::sendOne()
-{
-	digitalWrite(_out, _invertedSend ? LOW : HIGH);
-	delayMicroseconds(1800);
-	digitalWrite(_out, _invertedSend ? HIGH : LOW);
-	delayMicroseconds(1200);
+		bitTrain.bitsSent++;
+		bitTrain.bitInProgress = false;
+
+		if (bitTrain.bitsSent < bitTrain.bitsTotal) {
+			if (bitTrain.bits[bitTrain.bitsSent - 1]) {
+				timerAlarmWrite(dataTimer, 1200, false);
+			} else {
+				timerAlarmWrite(dataTimer, 2400, false);
+			}
+
+			timerWrite(dataTimer, 0);
+			timerAlarmEnable(dataTimer);
+		} else {
+			timerAlarmDisable(dataTimer);
+		}
+	} else {
+		// Send the first part of the data bit
+		digitalWrite(bitTrain.pinOut, bitTrain.invertedSend ? LOW : HIGH);
+
+		if (bitTrain.bits[bitTrain.bitsSent]) {
+			timerAlarmWrite(dataTimer, 1800, false);
+		} else {
+			timerAlarmWrite(dataTimer, 600, false);
+		}
+
+		timerWrite(dataTimer, 0);
+		timerAlarmEnable(dataTimer);
+
+		bitTrain.bitInProgress = true;
+	}
 }
 
 void MBus::writeHexBitWise(uint8_t nibble)
@@ -58,10 +102,11 @@ void MBus::writeHexBitWise(uint8_t nibble)
 	for (int8_t i = 3; i >= 0; i--) {
 		uint8_t bit = ((nibble & (1 << i) ) >> i);
 		if (bit == 1) {
-			sendOne();
+			bitTrain.bits[bitTrain.bitsTotal] = true;
 		} else {
-			sendZero();
+			bitTrain.bits[bitTrain.bitsTotal] = false;
 		}
+		bitTrain.bitsTotal++;
 	}
 }
 
@@ -87,20 +132,44 @@ void MBus::send(uint64_t message)
 {
 	bool firstDataSent = 0;
 	uint8_t parity = 0;
-	for (int8_t i = 15; i >= 0; i--) {
-		uint8_t nibble = ((uint64_t)message >> i * 4) & 0xf;
-		parity = parity ^ nibble;
-		if (nibble == 0 && !firstDataSent) {
-			// Do nothing, first actual data bit not sent yet
-		} else {
-			writeHexBitWise(nibble);
-			firstDataSent = true;
-		}
-	}
-	parity += 1;
-	parity &= 0xf;
 
-	writeHexBitWise(parity);
+	if (xSemaphoreTake(bitTrainMutex, portMAX_DELAY)) {
+		bitTrain.bitsTotal = 0;
+		bitTrain.bitsSent = 0;
+		bitTrain.bitInProgress = false;
+		bitTrain.invertedSend = _invertedSend;
+		bitTrain.pinOut = _out;
+
+		for (int8_t i = 15; i >= 0; i--) {
+			uint8_t nibble = ((uint64_t)message >> i * 4) & 0xf;
+			parity = parity ^ nibble;
+			if (nibble == 0 && !firstDataSent) {
+				// Do nothing, first actual data bit not sent yet
+			} else {
+				writeHexBitWise(nibble);
+				firstDataSent = true;
+			}
+		}
+		parity += 1;
+		parity &= 0xf;
+
+		writeHexBitWise(parity);
+
+		// Setup repeating timer for 10us, so that first bit starts soon - but slow enough that we have time to reset it
+		timerAlarmWrite(dataTimer, 10, true);
+		timerWrite(dataTimer, 0);
+		timerAlarmEnable(dataTimer);
+
+		// Delay to allow all bits to be transferred - 3ms a bit
+		vTaskDelay(pdMS_TO_TICKS(bitTrain.bitsTotal * 3));
+
+		// Ensure all bits are transferred before returning
+		while (bitTrain.bitsTotal != bitTrain.bitsSent) {
+			vTaskDelay(pdMS_TO_TICKS(1));
+		}
+
+		xSemaphoreGive(bitTrainMutex);
+	}
 }
 
 bool MBus::receive(uint64_t *message)
