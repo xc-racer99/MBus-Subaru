@@ -150,7 +150,7 @@ bool MBus::receive(uint64_t *message)
 */
 void MBus::sendPlayingTrack(uint8_t Track, uint16_t Time)
 {
-	uint64_t play = 0x994000100000001ull;
+	uint64_t play = 0xE94000100000001ull;
 	play |= (uint64_t)(Track % 10) << (10 * 4);
 	play |= (uint64_t)(Track / 10) << (11 * 4);
 	
@@ -164,7 +164,7 @@ void MBus::sendPlayingTrack(uint8_t Track, uint16_t Time)
 
 void MBus::sendChangedCD(uint8_t CD, uint8_t Track)
 {
-	uint64_t play = 0x9B900000001ull;
+	uint64_t play = 0xEB900000001ull;
 	play |= (uint64_t)CD << (7 * 4);
 	play |= (uint64_t)(Track % 10) << (5 * 4);
 	play |= (uint64_t)(Track / 10) << (6 * 4);
@@ -173,7 +173,7 @@ void MBus::sendChangedCD(uint8_t CD, uint8_t Track)
 
 void MBus::sendCDStatus(uint8_t CD)
 {
-	uint64_t play = 0x9C001999999Full;
+	uint64_t play = 0xEC001999999Full;
 	play |= (uint64_t)CD << (9 * 4);
 	send(play);
 }
